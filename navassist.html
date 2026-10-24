@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NavAssist case study · Shivani Radhakrishnan</title>
+<meta name="description" content="How I built NavAssist, a voice-first indoor navigation app for blind and low-vision people, and got metric depth on iPhones without LiDAR down to 6 cm median error.">
+<meta property="og:title" content="NavAssist: indoor navigation for blind people on an ordinary iPhone">
+<meta property="og:image" content="https://shivani-radhakrishnan.github.io/img/navassist-depth.jpg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Newsreader:opsz,wght@6..72,500;6..72,600&display=swap" rel="stylesheet">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%23b4462c'/><text x='32' y='44' font-family='Georgia' font-size='32' fill='white' text-anchor='middle'>S</text></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<main id="main" class="cs">
+  <a class="back" href="index.html#projects">← Shivani Radhakrishnan</a>
+
+  <h1>NavAssist</h1>
+  <p class="dek">Indoor navigation for blind and low-vision people on an ordinary iPhone. You walk a building once; after that it guides you back to any room by voice.</p>
+  <div class="meta">
+    <span><b>Role</b> · Solo: design, iOS app, ML, evaluation</span>
+    <span><b>When</b> · 2024 – present</span>
+    <span><b>Stack</b> · Swift, ARKit, Core ML, Create ML, Kotlin, Python</span>
+  </div>
+
+  <div class="nums">
+    <div><b>26 → 6 cm</b><span>median depth error on iPhones without LiDAR</span></div>
+    <div><b>0.99</b><span>F1 for obstacles in the walking corridor, vs 0.57 before</span></div>
+    <div><b>79% vs 47%</b><span>stairs found by my detector vs Apple's classifier</span></div>
+    <div><b>162</b><span>tests across the Swift core and its Kotlin port, run on every push</span></div>
+  </div>
+
+  <h2>The problem</h2>
+  <p>GPS doesn't work indoors, so blind people often rely on memory, a cane and asking strangers to find a room in an unfamiliar building. Many indoor navigation systems need beacons installed in the building or a LiDAR sensor that only Pro iPhones have.</p>
+  <p>I wanted something that works on any recent iPhone, in any building, with no setup: say "save this place as kitchen" once, then later "take me to kitchen".</p>
+
+  <h2>How it works</h2>
+  <figure class="fig arch">
+    <img src="img/navassist-arch.svg" loading="lazy" alt="Architecture diagram: the iPhone app's camera, ARKit tracking, speech and haptics feed a platform-independent navigation core with the route graph, A* routing, guidance, stairs, voice commands and place matching.">
+  </figure>
+  <ul>
+    <li><b>Maps as you walk.</b> ARKit tracks the phone's position. Every 0.5 m walked becomes a node in a route graph, and walks that cross are joined at junctions. Routes are found with A* and only use space someone has actually walked.</li>
+    <li><b>Voice only.</b> One screen: tap anywhere and speak. Speech recognition runs on the device, with 70+ phrasings ("where's the exit?", "what's around?"). A fuzzy matcher understands "two oh four" as room 204 but never mixes up different room numbers.</li>
+    <li><b>Guidance.</b> Spoken turn-by-turn directions plus vibrations (2 taps = left, 3 = right), clock-face corrections ("turn to 9 o'clock"), and re-planning when you go off route.</li>
+    <li><b>Reads signs.</b> On-device text recognition reads signs like "Room 204" and saves them as destinations, so you can go there without anyone saving it first.</li>
+    <li><b>Obstacles, doors and stairs.</b> Warnings only for things inside a 60 cm walking corridor, so it doesn't talk about every chair in the room.</li>
+  </ul>
+  <p>The navigation logic is a separate Swift package with 83 tests that run on a Mac without an iPhone. I ported it to Kotlin (79 tests) as the first step towards Android.</p>
+
+  <h2>The hard part: depth without LiDAR</h2>
+  <p>To warn about obstacles you need to know how far away things are, in meters. Non-Pro iPhones have no depth sensor. A neural network like <b>Depth Anything V2</b> can estimate depth from a single camera image, but only <i>relative</i> depth: it knows the chair is closer than the wall, not that it's 1.2 m away. Its scale also changes from frame to frame.</p>
+  <div class="callout">
+    <p><b>My idea:</b> ARKit already tracks a few hundred 3-D points in every frame, with real distances, for its own motion tracking. I use those points as a ruler. Every frame, I fit the network's output to those points (a robust least-squares fit on inverse depth, dropping the worst 25% of points twice), then convert every pixel to meters.</p>
+  </div>
+  <h3>Result</h3>
+  <p>I measured it on the TUM RGB-D benchmark (137 frames with true depth from a Kinect sensor), running the same Core ML model and the same fitting code the app uses. The baseline uses one conversion for the whole sequence.</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Method</th><th>AbsRel ↓</th><th>Within 1.25× ↑</th><th>Median error ↓</th></tr></thead>
+      <tbody>
+        <tr><td>One conversion for the whole sequence</td><td>0.172</td><td>70.0%</td><td>26 cm</td></tr>
+        <tr class="win"><td>Per-frame fit (NavAssist)</td><td>0.070</td><td>95.3%</td><td>6 cm</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <figure class="fig">
+    <img src="img/navassist-depth.jpg" width="1200" height="740" loading="lazy" alt="Three indoor scenes. For each: the camera image, the true depth from a Kinect sensor, NavAssist's estimate, which looks almost the same, and a mostly dark error map.">
+    <figcaption>Camera image, true depth, NavAssist's estimate, and the error. Errors are mostly at object edges and far away.</figcaption>
+  </figure>
+  <figure class="fig">
+    <img src="img/navassist-distance.jpg" loading="lazy" alt="Line chart of median depth error by true distance. NavAssist's per-frame fit stays at a few centimetres up to 1.5 m, while the single conversion drifts badly beyond 2 m.">
+    <figcaption>Within the 1.5 m range used for warnings, the median error is 2–4 cm.</figcaption>
+  </figure>
+  <p>Accuracy barely changes from 25 points upward, and holds up with 10% noise added to the points, which matters because real ARKit points are noisier than the benchmark's.</p>
+
+  <h2>Fewer false warnings</h2>
+  <p>The first version compared obstacles against a "floor ruler" in the image. In a home test, a basket beside the path kept triggering "obstacle ahead". With metric depth, the app's warnings agree far better with warnings computed from true depth:</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Zone</th><th>NavAssist F1</th><th>First version F1</th><th>False alarms (new vs old)</th></tr></thead>
+      <tbody>
+        <tr><td>Left</td><td>0.89</td><td>0.53</td><td>10 vs 26</td></tr>
+        <tr class="win"><td>Ahead</td><td>0.99</td><td>0.57</td><td>0 vs 3</td></tr>
+        <tr><td>Right</td><td>0.96</td><td>0.61</td><td>4 vs 25</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>When both found an obstacle ahead, the distance was within 1.5 cm of the true distance (median).</p>
+
+  <h3>Doors and stairs</h3>
+  <p>Apple's built-in image classifier often missed stairs, which is the most dangerous case. I trained my own door, door-handle and stairs detector with Create ML on 4,494 Open Images pictures. On 717 held-out pictures it finds stairs in <b>79%</b> of the pictures that have them (precision 91%), against 47% for Apple's classifier, and doors in 71% against 38%. It runs in 8.9 ms per image and the model is 6.9 MB.</p>
+
+  <h2>What didn't work (yet)</h2>
+  <p>I also tried to predict when a user is about to hesitate or turn too early, so the app can step in ("Not yet, keep straight for 2 meters"). I trained two small models on 7 motion features from 10 Hz trip logs.</p>
+  <p>In simulation, the early-turn model ranks events well (AUC 0.83, against 0.40 for the weights I first set by hand). But at a false-alarm rate a user would tolerate, at most 1 per minute, it only catches <b>13%</b> of early turns. Speaking 6 false warnings a minute isn't acceptable, so this stays off by default.</p>
+  <p>The simulation also caught a real bug: I computed speed from path length, so tracking jitter looked like walking and no hesitation was ever detected. Speed now uses net displacement.</p>
+
+  <h2>Limitations and next steps</h2>
+  <ul>
+    <li>Depth was evaluated on one public sequence with simulated feature points. Real ARKit points are noisier and cluster on texture.</li>
+    <li>Obstacle "ground truth" comes from true depth, not from people judging what counts as an obstacle.</li>
+    <li>The behaviour predictor has only seen simulated walkers. The app includes a study mode and analysis scripts for testing with real users next.</li>
+    <li>NavAssist is a research prototype. It doesn't replace a white cane, a guide dog, or orientation and mobility training.</li>
+  </ul>
+
+  <h2>What I learned</h2>
+  <ul>
+    <li><b>Measure before trusting.</b> The first obstacle method looked fine in demos; only the benchmark showed it missed most obstacles ahead.</li>
+    <li><b>Use what the platform already gives you.</b> The fix for depth wasn't a bigger model, it was using ARKit's tracked points, which were already there.</li>
+    <li><b>Report what fails.</b> The predictor result is a negative result, and it changed what I build next.</li>
+  </ul>
+
+  <div class="end">
+    <a class="in" href="https://github.com/Shivani-Radhakrishnan/NavAssist">Code on GitHub ↗</a>
+    <a class="in" href="https://github.com/Shivani-Radhakrishnan/NavAssist/blob/main/docs/technical-report.md">Full technical report ↗</a>
+    <a class="in" href="index.html">← Back to all projects</a>
+  </div>
+</main>
+<script>
+try{var t=localStorage.getItem('theme'); if(t) document.documentElement.setAttribute('data-theme',t);}catch(e){}
+</script>
+</body>
+</html>
